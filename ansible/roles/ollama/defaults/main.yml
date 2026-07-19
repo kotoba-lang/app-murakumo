@@ -1,0 +1,22 @@
+---
+# ollama role defaults.
+
+# Models pulled on every node. Override via inventory `ollama_models:` list.
+# Note: every node pulls the same set — no MLX-era model affinity. LiteLLM
+# does simple-shuffle LB across all backends that declare the same model alias.
+ollama_models:
+  - gemma3:1b
+  - gemma4:e4b
+  - qwen3.5:9b
+
+# Runtime tuning (env vars injected into the launchd start script).
+ollama_flash_attention: 1       # KV-cache flash attention
+ollama_kv_cache_type: q8_0      # quantized KV cache (lower VRAM)
+ollama_num_parallel: 4          # in-flight requests per model
+
+# Context window size. Ollama's built-in default is 4096 which is too small
+# for agent tool-use: system prompt + tools[] + message history easily
+# exceeds 4K tokens causing silent truncation and tool-definition drops.
+# qwen3.5:9b supports up to 32K; 16K fits agent use with headroom while
+# keeping KV cache memory bounded. Applies fleet-wide.
+ollama_context_length: 16384

@@ -1,0 +1,10 @@
+---
+- name: restart litellm
+  ansible.builtin.shell: |
+    pkill -f "{{ ansible_facts.env.HOME }}/litellm-venv/bin/litellm --config" 2>/dev/null || true
+    sleep 2
+    launchctl kickstart -k "gui/$(id -u)/com.etzhayyim.litellm.{{ inventory_hostname }}" 2>/dev/null || true
+    launchctl kickstart -k "user/$(id -u)/com.etzhayyim.litellm.{{ inventory_hostname }}" 2>/dev/null || true
+    launchctl load -w {{ ansible_facts.env.HOME }}/Library/LaunchAgents/com.etzhayyim.litellm.{{ inventory_hostname }}.plist 2>/dev/null || true
+    sleep 5
+    curl -sS http://127.0.0.1:{{ litellm_port | default(4000) }}/health/liveliness | grep -q alive

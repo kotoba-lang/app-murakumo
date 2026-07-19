@@ -1,0 +1,63 @@
+{
+  "lexicon": 1,
+  "id": "com.etzhayyim.murakumo.graphExtract",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "Extract graph entities/relations from did-domain traces using Qwen4B worker.",
+      "input": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": [
+            "labels",
+            "output"
+          ],
+          "properties": {
+            "labels": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "output": {
+              "type": "string"
+            },
+            "samples": {
+              "type": "integer",
+              "default": 50
+            },
+            "model": {
+              "type": "string",
+              "default": "Qwen3-VL-4B-Instruct-MLX-4bit"
+            }
+          }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": [
+            "output",
+            "processedLabels"
+          ],
+          "properties": {
+            "output": {
+              "type": "string"
+            },
+            "processedLabels": {
+              "type": "integer"
+            },
+            "entityCount": {
+              "type": "integer"
+            },
+            "relationCount": {
+              "type": "integer"
+            }
+          }
+        }
+      }
+    }
+  }
+}

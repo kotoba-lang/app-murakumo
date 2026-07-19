@@ -1,0 +1,36 @@
+---
+- name: Check Homebrew
+  ansible.builtin.stat:
+    path: /opt/homebrew/bin/brew
+  register: lima_k3s_brew
+
+- name: Check limactl
+  ansible.builtin.stat:
+    path: /opt/homebrew/bin/limactl
+  register: lima_k3s_limactl
+
+- name: Check krunkit
+  ansible.builtin.stat:
+    path: /opt/homebrew/bin/krunkit
+  register: lima_k3s_krunkit
+
+- name: Check existing Lima instance
+  ansible.builtin.shell: |
+    set -e
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+    export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$PATH"
+    export LIMA_HOME="{{ lima_k3s_home }}"
+    /opt/homebrew/bin/limactl list "{{ lima_k3s_instance }}" 2>/dev/null | awk 'NR==2 { print $2 }' || true
+  register: lima_k3s_instance_status
+  changed_when: false
+  failed_when: false
+  when: lima_k3s_limactl.stat.exists
+
+- name: Report preflight
+  ansible.builtin.debug:
+    msg:
+      host: "{{ inventory_hostname }}"
+      brew: "{{ lima_k3s_brew.stat.exists }}"
+      limactl: "{{ lima_k3s_limactl.stat.exists }}"
+      krunkit: "{{ lima_k3s_krunkit.stat.exists }}"
+      lima_instance: "{{ lima_k3s_instance_status.stdout | default('absent') }}"

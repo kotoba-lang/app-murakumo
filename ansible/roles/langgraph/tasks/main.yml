@@ -1,0 +1,113 @@
+---
+- name: Check Python 3.11 is available
+  ansible.builtin.stat:
+    path: /opt/homebrew/bin/python3.11
+  register: langgraph_python311
+
+- name: Fail fast when python@3.11 is absent
+  ansible.builtin.fail:
+    msg: "Install python@3.11 via brew: `brew install python@3.11`"
+  when: not langgraph_python311.stat.exists
+
+- name: Ensure ~/.etzhayyim exists
+  ansible.builtin.file:
+    path: "{{ ansible_facts.env.HOME }}/.etzhayyim"
+    state: directory
+    mode: "0755"
+
+- name: Ensure LaunchAgents directory exists for LangGraph
+  ansible.builtin.file:
+    path: "{{ ansible_facts.env.HOME }}/Library/LaunchAgents"
+    state: directory
+    mode: "0755"
+
+- name: Ensure LangGraph app directory exists
+  ansible.builtin.file:
+    path: "{{ ansible_facts.env.HOME }}/.etzhayyim/langgraph-app/src"
+    state: directory
+    mode: "0755"
+
+- name: Create LangGraph venv
+  ansible.builtin.command:
+    cmd: /opt/homebrew/bin/python3.11 -m venv {{ ansible_facts.env.HOME }}/langgraph-venv
+    creates: "{{ ansible_facts.env.HOME }}/langgraph-venv/bin/pip"
+
+- name: Install LangGraph dependencies
+  ansible.builtin.pip:
+    name:
+      - "langgraph-api=={{ langgraph_api_version }}"
+      - "langgraph-cli[inmem]=={{ langgraph_cli_version }}"
+      - "psycopg[binary]==3.2.9"
+      - "fastapi==0.116.1"
+      - "uvicorn==0.35.0"
+    virtualenv: "{{ ansible_facts.env.HOME }}/langgraph-venv"
+    virtualenv_command: /opt/homebrew/bin/python3.11 -m venv
+
+- name: Render LangGraph config
+  ansible.builtin.template:
+    src: langgraph.json.j2
+    dest: "{{ ansible_facts.env.HOME }}/.etzhayyim/langgraph-app/langgraph.json"
+    mode: "0644"
+  notify: restart langgraph
+
+- name: Render LangGraph app graph
+  ansible.builtin.template:
+    src: graph.py.j2
+    dest: "{{ ansible_facts.env.HOME }}/.etzhayyim/langgraph-app/src/graph.py"
+    mode: "0644"
+  notify: restart langgraph
+
+- name: Render control-plane API app
+  ansible.builtin.template:
+    src: app.py.j2
+    dest: "{{ ansible_facts.env.HOME }}/.etzhayyim/langgraph-app/src/app.py"
+    mode: "0644"
+  notify: restart langgraph
+
+- name: Render LangGraph env file
+  ansible.builtin.template:
+    src: langgraph.env.j2
+    dest: "{{ ansible_facts.env.HOME }}/.etzhayyim/langgraph.env"
+    mode: "0600"
+  notify: restart langgraph
+
+- name: Render LangGraph start script
+  ansible.builtin.template:
+    src: langgraph-start.sh.j2
+    dest: "{{ ansible_facts.env.HOME }}/.etzhayyim/langgraph-start.sh"
+    mode: "0755"
+  notify: restart langgraph
+
+- name: Render LangGraph launchd plist
+  ansible.builtin.template:
+    src: com.etzhayyim.langgraph.plist.j2
+    dest: "{{ ansible_facts.env.HOME }}/Library/LaunchAgents/com.etzhayyim.langgraph.{{ inventory_hostname }}.plist"
+    mode: "0644"
+  notify: restart langgraph
+
+- name: Remove legacy @reboot crontab entry for LangGraph
+  ansible.builtin.cron:
+    name: "langgraph-control-plane"
+    state: absent
+
+- name: Load LangGraph launchd service
+  ansible.builtin.command:
+    cmd: "launchctl load -w {{ ansible_facts.env.HOME }}/Library/LaunchAgents/com.etzhayyim.langgraph.{{ inventory_hostname }}.plist"
+  changed_when: false
+  failed_when: false
+
+- name: Flush LangGraph handlers before health verification
+  ansible.builtin.meta: flush_handlers
+
+- name: Verify control-plane health
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ langgraph_port }}/healthz"
+    return_content: true
+  register: langgraph_health
+  until: "'true' in (langgraph_health.content | default(''))"
+  retries: 6
+  delay: 3
+
+- name: Report LangGraph status
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: LangGraph control plane configured on :{{ langgraph_port }}"

@@ -1,0 +1,9 @@
+---
+langgraph_port: 8000
+langgraph_api_version: "0.8.0"
+langgraph_cli_version: "0.4.23"
+langgraph_postgres_db: "etzhayyim_control"
+langgraph_postgres_user: "etzhayyim_control"
+langgraph_postgres_password: "etzhayyim_control_local"
+langgraph_postgres_host: "127.0.0.1"
+langgraph_postgres_port: 5432

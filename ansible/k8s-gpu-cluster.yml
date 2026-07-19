@@ -1,0 +1,49 @@
+---
+# k8s-gpu-cluster.yml — Mac mini fleet k3s-on-Lima GPU cluster.
+#
+# This runs one Linux VM per Mac mini. The VM, not macOS, joins k3s.
+# Cross-node pod networking requires a routable VM-to-VM network. This playbook
+# builds a small WireGuard overlay inside the Lima VMs and binds k3s node-ip and
+# flannel to wg0.
+#
+# Required when bootstrapping from scratch:
+#   ansible-playbook k8s-gpu-cluster.yml --tags=preflight
+#   ansible-playbook k8s-gpu-cluster.yml --tags=tools
+#   MURAKUMO_K3S_TOKEN="$(openssl rand -hex 32)" \
+#   ansible-playbook k8s-gpu-cluster.yml --tags=bootstrap
+
+- name: Install Mac mini GPU k8s host tools
+  hosts: fleet
+  gather_facts: true
+  roles:
+    - role: lima_k3s_gpu
+      vars:
+        lima_k3s_gpu_mode: tools
+  tags: [tools, k8s-gpu]
+
+- name: Preflight Mac mini GPU k8s prerequisites
+  hosts: fleet
+  gather_facts: true
+  roles:
+    - role: lima_k3s_gpu
+      vars:
+        lima_k3s_gpu_mode: preflight
+  tags: [preflight, k8s-gpu]
+
+- name: Bootstrap Mac mini GPU k3s cluster
+  hosts: fleet
+  gather_facts: true
+  roles:
+    - role: lima_k3s_gpu
+      vars:
+        lima_k3s_gpu_mode: bootstrap
+  tags: [bootstrap, k8s-gpu]
+
+- name: Deploy llama.cpp Vulkan server to GPU k3s cluster
+  hosts: control_plane
+  gather_facts: true
+  roles:
+    - role: lima_k3s_gpu
+      vars:
+        lima_k3s_gpu_mode: deploy_llama_vulkan
+  tags: [deploy, llama-vulkan, k8s-gpu]

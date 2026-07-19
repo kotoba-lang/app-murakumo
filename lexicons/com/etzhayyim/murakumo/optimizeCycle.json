@@ -1,0 +1,60 @@
+{
+  "lexicon": 1,
+  "id": "com.etzhayyim.murakumo.optimizeCycle",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "Run one efficient Murakumo optimization cycle: ingest did_domains chunk, update quality score, train chunked experts, and run eval.",
+      "input": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "ingestStart": {
+              "type": "integer",
+              "default": 0
+            },
+            "ingestCount": {
+              "type": "integer",
+              "default": 10
+            },
+            "trainStart": {
+              "type": "integer",
+              "default": 0
+            },
+            "trainCount": {
+              "type": "integer",
+              "default": 4
+            },
+            "samplesPer": {
+              "type": "integer",
+              "default": 200
+            },
+            "evalLimit": {
+              "type": "integer",
+              "default": 20
+            }
+          }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": [
+            "runId",
+            "status"
+          ],
+          "properties": {
+            "runId": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

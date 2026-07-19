@@ -1,0 +1,56 @@
+{
+  "lexicon": 1,
+  "id": "com.etzhayyim.murakumo.planPipeline",
+  "defs": {
+    "main": {
+      "type": "query",
+      "description": "Return canonical Hayate V6 pipeline steps for graph extraction, ingest, training, and evaluation.",
+      "parameters": {
+        "type": "params",
+        "properties": {
+          "asJson": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": [
+            "steps"
+          ],
+          "properties": {
+            "steps": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "index",
+                  "command",
+                  "nsid",
+                  "purpose"
+                ],
+                "properties": {
+                  "index": {
+                    "type": "integer"
+                  },
+                  "command": {
+                    "type": "string"
+                  },
+                  "nsid": {
+                    "type": "string"
+                  },
+                  "purpose": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

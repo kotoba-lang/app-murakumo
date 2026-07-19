@@ -1,0 +1,6 @@
+---
+postgres_port: 5432
+postgres_version: "17"
+postgres_db_name: "etzhayyim_control"
+postgres_db_user: "etzhayyim_control"
+postgres_db_password: "etzhayyim_control_local" # placeholder

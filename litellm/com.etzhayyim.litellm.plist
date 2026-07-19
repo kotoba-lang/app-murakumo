@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.etzhayyim.litellm</string>
+
+  <!-- Run as the user who deployed (install.sh sets this per machine). -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/etzhayyim/litellm/.venv/bin/litellm</string>
+    <string>--config</string>
+    <string>/opt/etzhayyim/litellm/config.yaml</string>
+    <string>--host</string>
+    <string>127.0.0.1</string>
+    <string>--port</string>
+    <string>4000</string>
+    <string>--num_workers</string>
+    <string>2</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- Populated by install.sh from `security find-generic-password -s etzhayyim.litellm -a MASTER_KEY -w` -->
+    <key>LITELLM_MASTER_KEY</key>
+    <string>REPLACE_AT_INSTALL</string>
+    <key>PATH</key>
+    <string>/opt/etzhayyim/litellm/.venv/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/var/log/etzhayyim-litellm.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/var/log/etzhayyim-litellm.err.log</string>
+
+  <!-- Restart on any exit; throttle at 10s min between attempts. -->
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+</dict>
+</plist>

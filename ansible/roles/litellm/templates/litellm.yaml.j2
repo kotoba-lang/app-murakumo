@@ -1,0 +1,45 @@
+# LiteLLM fleet config — rendered by ansible litellm role.
+# One model_list entry per (model alias × fleet node); simple-shuffle LB picks
+# any backend that declares the requested model_name.
+
+model_list:
+{% for model in litellm_models %}
+{%   if inventory_hostname in groups['litellm_gateway'] %}
+  - model_name: {{ model.alias }}
+    litellm_params:
+      model: ollama/{{ model.ollama_model }}
+      api_base: http://127.0.0.1:11434
+{%   endif %}
+{%   for host in groups['fleet'] %}
+  - model_name: {{ model.alias }}
+    litellm_params:
+      model: ollama/{{ model.ollama_model }}
+      api_base: http://{{ hostvars[host].ansible_host }}:11434
+{%   endfor %}
+{% endfor %}
+{% for model in litellm_external_models | default([]) %}
+  - model_name: {{ model.alias }}
+    litellm_params:
+      model: {{ model.model }}
+      api_base: {{ model.api_base }}
+      api_key: {{ model.api_key }}
+{%   if model.timeout is defined %}
+      timeout: {{ model.timeout }}
+{%   endif %}
+{%   if model.stream_timeout is defined %}
+      stream_timeout: {{ model.stream_timeout }}
+{%   endif %}
+{% endfor %}
+
+router_settings:
+  routing_strategy: simple-shuffle
+  num_retries: 2
+  timeout: 300
+  fallbacks: []
+
+litellm_settings:
+  drop_params: true
+
+general_settings:
+  master_key: {{ litellm_master_key }}
+  database_url: {{ litellm_database_url }}

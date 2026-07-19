@@ -1,0 +1,64 @@
+{
+  "lexicon": 1,
+  "id": "com.etzhayyim.murakumo.runPipeline",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "Execute end-to-end sequence: graphExtract -> graphIngest -> coverageExport -> fleetPlan -> trainExperts -> evalV6.",
+      "input": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": [
+            "labels",
+            "graphOutput",
+            "coverageOutput",
+            "expertDataDir"
+          ],
+          "properties": {
+            "labels": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "graphOutput": {
+              "type": "string"
+            },
+            "coverageOutput": {
+              "type": "string"
+            },
+            "expertDataDir": {
+              "type": "string"
+            },
+            "targetSlots": {
+              "type": "integer",
+              "default": 500000
+            }
+          }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": [
+            "status",
+            "steps"
+          ],
+          "properties": {
+            "status": {
+              "type": "string"
+            },
+            "steps": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

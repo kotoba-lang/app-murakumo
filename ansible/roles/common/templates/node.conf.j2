@@ -1,0 +1,7 @@
+# Murakumo node configuration — managed by Ansible
+# Do not edit manually
+ETZHAYYIM_HOST_ID={{ inventory_hostname }}
+ETZHAYYIM_POD_ID={{ inventory_hostname }}-pod
+ETZHAYYIM_GPU_TIER=mlx
+ETZHAYYIM_GPU_VRAM_MB=16384
+ETZHAYYIM_DEFAULT_MODEL={{ default_model }}

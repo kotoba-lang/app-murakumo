@@ -1,0 +1,38 @@
+---
+- name: Check Homebrew
+  ansible.builtin.stat:
+    path: /opt/homebrew/bin/brew
+  register: lima_k3s_brew
+
+- name: Stop if Homebrew is missing
+  ansible.builtin.fail:
+    msg: "Homebrew is required at /opt/homebrew/bin/brew before installing Lima/krunkit"
+  when: not lima_k3s_brew.stat.exists
+
+- name: Install Lima and krunkit host tooling
+  ansible.builtin.shell: |
+    set -e
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+    brew tap slp/krunkit >/dev/null 2>&1 || true
+    brew list lima >/dev/null 2>&1 || brew install lima
+    brew list krunkit >/dev/null 2>&1 || brew install krunkit
+  register: lima_k3s_tools_install
+  changed_when: >-
+    '==> Installing' in lima_k3s_tools_install.stdout or
+    '==> Pouring' in lima_k3s_tools_install.stdout or
+    'Installing' in lima_k3s_tools_install.stderr
+
+- name: Show installed tool versions
+  ansible.builtin.shell: |
+    set -e
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+    limactl --version
+    krunkit --version 2>/dev/null || krunkit -version 2>/dev/null || true
+  register: lima_k3s_tools_versions
+  changed_when: false
+
+- name: Report tool versions
+  ansible.builtin.debug:
+    msg:
+      host: "{{ inventory_hostname }}"
+      versions: "{{ lima_k3s_tools_versions.stdout_lines }}"

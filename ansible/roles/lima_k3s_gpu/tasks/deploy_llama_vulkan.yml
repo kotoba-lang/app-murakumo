@@ -1,0 +1,40 @@
+---
+- name: Render llama-vulkan manifest
+  ansible.builtin.command:
+    cmd: kubectl kustomize "{{ murakumo_llama_vulkan_manifest_dir }}"
+  delegate_to: localhost
+  register: llama_vulkan_manifest
+  changed_when: false
+
+- name: Apply llama-vulkan manifest inside control-plane VM
+  ansible.builtin.shell: |
+    set -e
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+    export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$PATH"
+    export LIMA_HOME="{{ lima_k3s_home }}"
+    /opt/homebrew/bin/limactl shell "{{ lima_k3s_instance }}" -- sudo kubectl apply -f -
+  args:
+    stdin: "{{ llama_vulkan_manifest.stdout }}"
+
+- name: Wait for llama-vulkan rollout
+  ansible.builtin.shell: |
+    set -e
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+    export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$PATH"
+    export LIMA_HOME="{{ lima_k3s_home }}"
+    /opt/homebrew/bin/limactl shell "{{ lima_k3s_instance }}" -- sudo kubectl -n murakumo-system rollout status deployment/llama-vulkan --timeout=300s
+  changed_when: false
+
+- name: Show llama-vulkan pods
+  ansible.builtin.shell: |
+    set -e
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+    export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$PATH"
+    export LIMA_HOME="{{ lima_k3s_home }}"
+    /opt/homebrew/bin/limactl shell "{{ lima_k3s_instance }}" -- sudo kubectl -n murakumo-system get pods -o wide
+  register: llama_vulkan_pods
+  changed_when: false
+
+- name: Report llama-vulkan pods
+  ansible.builtin.debug:
+    var: llama_vulkan_pods.stdout_lines

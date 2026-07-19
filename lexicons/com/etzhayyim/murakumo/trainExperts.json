@@ -1,0 +1,60 @@
+{
+  "lexicon": 1,
+  "id": "com.etzhayyim.murakumo.trainExperts",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "Run phase-2 Hayate V6 expert training and persist experts to LanceDB/yata-ready artifacts.",
+      "input": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "nLabels": {
+              "type": "integer",
+              "default": 8
+            },
+            "samplesPer": {
+              "type": "integer",
+              "default": 5000
+            },
+            "epochs": {
+              "type": "integer",
+              "default": 2
+            },
+            "slotsPer": {
+              "type": "integer",
+              "default": 256
+            },
+            "batchSize": {
+              "type": "integer",
+              "default": 2
+            },
+            "learningRate": {
+              "type": "string",
+              "default": "0.0001"
+            }
+          }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": [
+            "trainedLabels",
+            "summaryPath"
+          ],
+          "properties": {
+            "trainedLabels": {
+              "type": "integer"
+            },
+            "summaryPath": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,27 @@
+#!/bin/bash
+# nomad-launchd-wrapper.sh — Launch Nomad via launchctl asuser (LN Privacy bypass)
+# Managed by Ansible — do not edit manually
+set -euo pipefail
+
+NOMAD_BIN="{{ nomad_bin }}"
+LOG_DIR="{{ etzhayyim_dir }}"
+mkdir -p "$LOG_DIR"
+
+CONSOLE_USER=$(stat -f %Su /dev/console 2>/dev/null || echo "")
+if [ -z "$CONSOLE_USER" ] || [ "$CONSOLE_USER" = "root" ]; then
+    CONSOLE_USER=$(basename "$HOME")
+fi
+CONSOLE_UID=$(id -u "$CONSOLE_USER" 2>/dev/null || echo "")
+
+if [ -z "$CONSOLE_UID" ]; then
+    echo "$(date) ERROR: cannot determine console user UID" >> "$LOG_DIR/nomad.log"
+    exit 1
+fi
+
+NOMAD_CONFIG="/Users/$CONSOLE_USER/.nomad/nomad.hcl"
+if [ ! -f "$NOMAD_CONFIG" ]; then
+    echo "$(date) ERROR: config not found: $NOMAD_CONFIG" >> "$LOG_DIR/nomad.log"
+    exit 1
+fi
+
+exec launchctl asuser "$CONSOLE_UID" "$NOMAD_BIN" agent -config="$NOMAD_CONFIG"

@@ -1,0 +1,10 @@
+#!/bin/zsh
+set -euo pipefail
+
+export DATABASE_URL="{{ litellm_database_url }}"
+export STORE_MODEL_IN_DB="True"
+
+exec "{{ ansible_facts.env.HOME }}/litellm-venv/bin/litellm" \
+  --config "{{ ansible_facts.env.HOME }}/litellm.yaml" \
+  --host 0.0.0.0 \
+  --port {{ litellm_port | default(4000) }}

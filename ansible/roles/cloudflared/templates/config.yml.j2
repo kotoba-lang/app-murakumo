@@ -1,0 +1,14 @@
+tunnel: {{ cloudflared_tunnel_id }}
+credentials-file: {{ ansible_facts.env.HOME }}/.cloudflared/{{ cloudflared_tunnel_id }}.json
+
+ingress:
+{% if inventory_hostname in groups['control_plane'] %}
+  - hostname: {{ cloudflared_agent_hostname }}
+    service: http://localhost:8000
+  - hostname: {{ cloudflared_llm_hostname }}
+    service: http://localhost:4000
+{% else %}
+  - hostname: metrics-{{ inventory_hostname }}.{{ cloudflared_metrics_domain }}
+    service: http://localhost:11434
+{% endif %}
+  - service: http_status:404

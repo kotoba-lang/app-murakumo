@@ -1,0 +1,76 @@
+{
+  "lexicon": 1,
+  "id": "com.etzhayyim.murakumo.graphIngest",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "Ingest graph JSONL into LanceDB and optionally MERGE graph entities into yata via SQL.",
+      "input": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": [
+            "input",
+            "lancedbUri"
+          ],
+          "properties": {
+            "input": {
+              "type": "string"
+            },
+            "lancedbUri": {
+              "type": "string"
+            },
+            "entitiesTable": {
+              "type": "string",
+              "default": "graph_entities"
+            },
+            "relationsTable": {
+              "type": "string",
+              "default": "graph_relations"
+            },
+            "pushYata": {
+              "type": "boolean",
+              "default": false
+            },
+            "pdsUrl": {
+              "type": "string",
+              "default": "https://atproto.etzhayyim.com"
+            }
+          }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": [
+            "entityCount",
+            "relationCount",
+            "entitiesTable",
+            "relationsTable"
+          ],
+          "properties": {
+            "entityCount": {
+              "type": "integer"
+            },
+            "relationCount": {
+              "type": "integer"
+            },
+            "entitiesTable": {
+              "type": "string"
+            },
+            "relationsTable": {
+              "type": "string"
+            },
+            "yataPushOk": {
+              "type": "integer"
+            },
+            "yataPushNg": {
+              "type": "integer"
+            }
+          }
+        }
+      }
+    }
+  }
+}

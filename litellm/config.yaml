@@ -1,0 +1,80 @@
+# LiteLLM config for murakumo — RunPod GPU cluster (RTX 6000 Ada, vLLM).
+#
+# Traffic path:
+#   CF Worker / host-sdk → https://llm.etzhayyim.com/v1/chat/completions
+#   → LiteLLM (gateway, port 4000)
+#   → RunPod Serverless API (OpenAI-compat, vLLM)
+#     https://api.runpod.ai/v2/{endpoint-id}/openai/v1
+#
+# Required env on the LiteLLM host:
+#   RUNPOD_GEMMA4_OPENAI_BASE  — RunPod serverless endpoint base URL
+#                                (e.g. https://api.runpod.ai/v2/vyp99t9px7h4dl/openai/v1)
+#   RUNPOD_API_KEY             — RunPod API key
+#   LITELLM_MASTER_KEY         — LiteLLM master key
+#
+# SSoT: ADR-2605010000 (RunPod RTX 6000 Ada unified pod).
+
+model_list:
+  # ── Tier 0 general — default chat model (gemma4-e4b via vLLM on RTX 6000 Ada) ──
+  - model_name: tier0-general
+    litellm_params:
+      model: openai/gemma-4-e4b-it
+      api_base: os.environ/RUNPOD_GEMMA4_OPENAI_BASE
+      api_key: os.environ/RUNPOD_API_KEY
+      timeout: 180
+      stream_timeout: 240
+
+  # ── Tier 0 fast — lighter timeout budget for latency-sensitive callers ──
+  - model_name: tier0-fast
+    litellm_params:
+      model: openai/gemma-4-e4b-it
+      api_base: os.environ/RUNPOD_GEMMA4_OPENAI_BASE
+      api_key: os.environ/RUNPOD_API_KEY
+      timeout: 90
+      stream_timeout: 150
+
+  # ── Tier 0 structured — JSON / extraction tasks ──
+  - model_name: tier0-structured
+    litellm_params:
+      model: openai/gemma-4-e4b-it
+      api_base: os.environ/RUNPOD_GEMMA4_OPENAI_BASE
+      api_key: os.environ/RUNPOD_API_KEY
+      timeout: 180
+      stream_timeout: 240
+
+  # ── Explicit RunPod aliases (backward-compat for callers that pin these names) ──
+  - model_name: gemma4-runpod
+    litellm_params:
+      model: openai/gemma-4-e4b-it
+      api_base: os.environ/RUNPOD_GEMMA4_OPENAI_BASE
+      api_key: os.environ/RUNPOD_API_KEY
+      timeout: 180
+      stream_timeout: 240
+
+  - model_name: tier0-runpod
+    litellm_params:
+      model: openai/gemma-4-e4b-it
+      api_base: os.environ/RUNPOD_GEMMA4_OPENAI_BASE
+      api_key: os.environ/RUNPOD_API_KEY
+      timeout: 180
+      stream_timeout: 240
+
+# ── Router settings ──────────────────────────────────────────────────────────
+router_settings:
+  num_retries: 3
+  timeout: 180
+  allowed_fails: 3
+  cooldown_time: 30
+
+litellm_settings:
+  drop_params: true
+  set_verbose: false
+  telemetry: false
+  cache: false
+  success_callback: []
+  failure_callback: []
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  # No database — stateless proxy, no budget tracking (add proxy_batch_write_at
+  # later if per-user billing becomes a requirement).

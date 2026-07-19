@@ -1,0 +1,15 @@
+{
+  "nodes": [
+{% for host in groups['fleet'] %}
+    {
+      "name": "{{ host }}",
+      "endpoint": "{{ hostvars[host].ansible_host }}",
+      "overlay_ip": "{{ hostvars[host].murakumo_k3s_wg_ip }}",
+{% if hostvars[host].murakumo_k3s_pod_cidr is defined %}
+      "pod_cidr": "{{ hostvars[host].murakumo_k3s_pod_cidr }}",
+{% endif %}
+      "public_key": "{{ hostvars[host].murakumo_k3s_wg_public_key }}"
+    }{% if not loop.last %},{% endif %}
+{% endfor %}
+  ]
+}

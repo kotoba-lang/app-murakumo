@@ -1,0 +1,9 @@
+---
+executor_port: 8090
+executor_control_plane_url: "http://{{ hostvars[groups['control_plane'][0]].ansible_host }}:8000"
+executor_poll_interval_sec: 5
+executor_r2_endpoint_url: ""
+executor_r2_bucket: ""
+executor_r2_access_key_id: ""
+executor_r2_secret_access_key: ""
+executor_r2_public_base_url: ""

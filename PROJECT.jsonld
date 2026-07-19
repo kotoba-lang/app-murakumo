@@ -1,0 +1,10 @@
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "murakumo",
+  "url": "https://murakumo.etzhayyim.com",
+  "description": "Distributed native MLX inference platform — Mac Mini M4 fleet + Nomad + OpenAI-compatible API (murakumo.etzhayyim.com)",
+  "applicationCategory": "DistributedComputing",
+  "operatingSystem": "macOS (Apple Silicon)",
+  "softwareRequirements": "Mac Mini M4 + Python MLX"
+}

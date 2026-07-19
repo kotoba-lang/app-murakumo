@@ -1,0 +1,6 @@
+---
+- name: restart cloudflared
+  ansible.builtin.shell: |
+    launchctl unload {{ ansible_facts.env.HOME }}/Library/LaunchAgents/com.etzhayyim.cloudflared.plist 2>/dev/null || true
+    launchctl load -w {{ ansible_facts.env.HOME }}/Library/LaunchAgents/com.etzhayyim.cloudflared.plist
+  changed_when: true

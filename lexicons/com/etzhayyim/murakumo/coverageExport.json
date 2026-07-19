@@ -1,0 +1,57 @@
+{
+  "lexicon": 1,
+  "id": "com.etzhayyim.murakumo.coverageExport",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "Export coverage domains from etzhayyim coverage + yata text to npy datasets.",
+      "input": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": [
+            "output"
+          ],
+          "properties": {
+            "output": {
+              "type": "string"
+            },
+            "targetTokens": {
+              "type": "integer",
+              "default": 1000000000
+            },
+            "pdsUrl": {
+              "type": "string",
+              "default": "https://atproto.etzhayyim.com"
+            }
+          }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": [
+            "output",
+            "numDomains",
+            "totalTokens"
+          ],
+          "properties": {
+            "output": {
+              "type": "string"
+            },
+            "numDomains": {
+              "type": "integer"
+            },
+            "totalTokens": {
+              "type": "integer"
+            },
+            "metaPath": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+---
+- name: Run lima_k3s_gpu host tool install
+  ansible.builtin.include_tasks: tools.yml
+  when: lima_k3s_gpu_mode == 'tools'
+
+- name: Run lima_k3s_gpu preflight
+  ansible.builtin.include_tasks: preflight.yml
+  when: lima_k3s_gpu_mode == 'preflight'
+
+- name: Run lima_k3s_gpu bootstrap
+  ansible.builtin.include_tasks: bootstrap.yml
+  when: lima_k3s_gpu_mode == 'bootstrap'
+
+- name: Run llama-vulkan deployment
+  ansible.builtin.include_tasks: deploy_llama_vulkan.yml
+  when: lima_k3s_gpu_mode == 'deploy_llama_vulkan'

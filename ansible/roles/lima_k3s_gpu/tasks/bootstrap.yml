@@ -1,0 +1,241 @@
+---
+- name: Fail when Homebrew is absent
+  ansible.builtin.stat:
+    path: /opt/homebrew/bin/brew
+  register: lima_k3s_brew
+
+- name: Stop if Homebrew is missing
+  ansible.builtin.fail:
+    msg: "Homebrew is required at /opt/homebrew/bin/brew before bootstrapping Lima/krunkit"
+  when: not lima_k3s_brew.stat.exists
+
+- name: Install Lima and krunkit
+  ansible.builtin.shell: |
+    set -e
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+    brew tap slp/krunkit >/dev/null 2>&1 || true
+    brew list lima >/dev/null 2>&1 || brew install lima
+    brew list krunkit >/dev/null 2>&1 || brew install krunkit
+  register: lima_k3s_brew_install
+  changed_when: "'Pouring' in lima_k3s_brew_install.stdout or 'Installing' in lima_k3s_brew_install.stdout"
+
+- name: Require cluster token
+  ansible.builtin.fail:
+    msg: "Set MURAKUMO_K3S_TOKEN in the environment or pass murakumo_k3s_token via --extra-vars"
+  when: (murakumo_k3s_token | default(lookup('ansible.builtin.env', 'MURAKUMO_K3S_TOKEN'), true) | length) == 0
+
+- name: Ensure Lima home exists
+  ansible.builtin.file:
+    path: "{{ lima_k3s_home }}"
+    state: directory
+    mode: "0755"
+
+- name: Stop and delete existing Lima instance when force recreate is enabled
+  ansible.builtin.shell: |
+    set -e
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+    export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$PATH"
+    export LIMA_HOME="{{ lima_k3s_home }}"
+    if /opt/homebrew/bin/limactl list "{{ lima_k3s_instance }}" >/dev/null 2>&1; then
+      /opt/homebrew/bin/limactl stop "{{ lima_k3s_instance }}" >/dev/null 2>&1 || true
+      /opt/homebrew/bin/limactl delete -f "{{ lima_k3s_instance }}"
+    fi
+  when: lima_k3s_force_recreate | bool
+  changed_when: true
+
+- name: Render Lima k3s bootstrap config
+  ansible.builtin.template:
+    src: lima-k3s.yaml.j2
+    dest: "{{ lima_k3s_home }}/{{ lima_k3s_instance }}.yaml"
+    mode: "0600"
+
+- name: Start Lima k3s GPU instance
+  ansible.builtin.shell: |
+    set -e
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+    export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$PATH"
+    export LIMA_HOME="{{ lima_k3s_home }}"
+    if /opt/homebrew/bin/limactl list "{{ lima_k3s_instance }}" >/dev/null 2>&1; then
+      /opt/homebrew/bin/limactl start "{{ lima_k3s_instance }}"
+    else
+      /opt/homebrew/bin/limactl start --name="{{ lima_k3s_instance }}" --tty=false "{{ lima_k3s_home }}/{{ lima_k3s_instance }}.yaml"
+    fi
+  register: lima_k3s_start
+  changed_when: "'READY' in lima_k3s_start.stderr or 'READY' in lima_k3s_start.stdout"
+
+- name: Install WireGuard tooling and generate node key
+  ansible.builtin.shell: |
+    set -e
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+    export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$PATH"
+    export LIMA_HOME="{{ lima_k3s_home }}"
+    /opt/homebrew/bin/limactl shell "{{ lima_k3s_instance }}" -- sudo sh -lc '
+      set -e
+      if command -v dnf >/dev/null 2>&1; then
+        dnf install -y wireguard-tools curl iproute iptables >/dev/null
+      elif command -v apt-get >/dev/null 2>&1; then
+        apt-get update >/dev/null
+        DEBIAN_FRONTEND=noninteractive apt-get install -y wireguard-tools curl iproute2 iptables >/dev/null
+      fi
+      mkdir -p /etc/murakumo-netd /etc/wireguard
+      chmod 700 /etc/murakumo-netd /etc/wireguard
+      test -f /etc/murakumo-netd/privatekey || wg genkey > /etc/murakumo-netd/privatekey
+      chmod 600 /etc/murakumo-netd/privatekey
+      wg pubkey < /etc/murakumo-netd/privatekey
+    '
+  register: lima_k3s_wg_public_key
+  changed_when: false
+
+- name: Publish WireGuard facts
+  ansible.builtin.set_fact:
+    murakumo_k3s_wg_public_key: "{{ lima_k3s_wg_public_key.stdout_lines[-1] }}"
+    murakumo_k3s_wg_ip: "{{ murakumo_k3s_overlay_cidr_prefix }}.{{ groups['fleet'].index(inventory_hostname) + 1 }}"
+
+- name: Build murakumo-netd for Linux arm64
+  ansible.builtin.shell: |
+    set -e
+    mkdir -p "{{ murakumo_netd_build_dir }}"
+    cd "{{ murakumo_netd_source_dir }}"
+    GOOS=linux GOARCH=arm64 go build -o "{{ murakumo_netd_build_dir }}/murakumo-netd" .
+  delegate_to: localhost
+  run_once: true
+  changed_when: true
+
+- name: Copy murakumo-netd binary to macOS host
+  ansible.builtin.copy:
+    src: "{{ murakumo_netd_build_dir }}/murakumo-netd"
+    dest: "{{ lima_k3s_home }}/murakumo-netd-linux-arm64"
+    mode: "0755"
+
+- name: Render murakumo-netd node inventory on macOS host
+  ansible.builtin.template:
+    src: nodes.json.j2
+    dest: "{{ lima_k3s_home }}/nodes.json"
+    mode: "0600"
+
+- name: Install murakumo-netd and start WireGuard inside VM
+  ansible.builtin.shell: |
+    set -e
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+    export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$PATH"
+    export LIMA_HOME="{{ lima_k3s_home }}"
+    /opt/homebrew/bin/limactl copy --backend=scp "{{ lima_k3s_home }}/murakumo-netd-linux-arm64" "{{ lima_k3s_instance }}:/tmp/murakumo-netd"
+    /opt/homebrew/bin/limactl copy --backend=scp "{{ lima_k3s_home }}/nodes.json" "{{ lima_k3s_instance }}:/tmp/nodes.json"
+    /opt/homebrew/bin/limactl shell "{{ lima_k3s_instance }}" -- sudo sh -lc '
+      set -e
+      install -m 0755 /tmp/murakumo-netd /usr/local/bin/murakumo-netd
+      install -d -m 0700 /etc/murakumo-netd
+      install -m 0600 /tmp/nodes.json /etc/murakumo-netd/nodes.json
+      /usr/local/bin/murakumo-netd render \
+        --node "{{ inventory_hostname }}" \
+        --inventory /etc/murakumo-netd/nodes.json \
+        --private-key-file /etc/murakumo-netd/privatekey \
+        --out /etc/wireguard/wg0.conf
+      /usr/local/bin/murakumo-netd apply --config /etc/wireguard/wg0.conf --iface wg0
+      wg show wg0
+    '
+  register: lima_k3s_wg_show
+  changed_when: true
+
+- name: Install k3s server on control-plane VM
+  ansible.builtin.shell: |
+    set -e
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+    export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$PATH"
+    export LIMA_HOME="{{ lima_k3s_home }}"
+    /opt/homebrew/bin/limactl shell "{{ lima_k3s_instance }}" -- sudo sh -lc '
+      set -e
+      if ! systemctl is-active --quiet k3s; then
+        curl -sfL https://get.k3s.io | \
+          K3S_TOKEN="{{ murakumo_k3s_token | default(lookup('ansible.builtin.env', 'MURAKUMO_K3S_TOKEN'), true) }}" \
+          INSTALL_K3S_EXEC="server \
+            --node-name {{ inventory_hostname }} \
+            --node-ip {{ murakumo_k3s_wg_ip }} \
+            --advertise-address {{ murakumo_k3s_wg_ip }} \
+            --flannel-iface {{ murakumo_k3s_overlay_iface }} \
+            --flannel-backend host-gw \
+            --cluster-cidr {{ murakumo_k3s_cluster_cidr }} \
+            --service-cidr {{ murakumo_k3s_service_cidr }} \
+            --write-kubeconfig-mode=644 \
+            --disable=traefik \
+            --disable=servicelb" \
+          sh -
+      fi
+      for i in $(seq 1 60); do
+        kubectl get node {{ inventory_hostname }} -o wide && exit 0
+        sleep 2
+      done
+      kubectl get node {{ inventory_hostname }} -o wide
+    '
+  register: lima_k3s_server_install
+  when: inventory_hostname == murakumo_k3s_server_host
+  changed_when: "'Installing' in lima_k3s_server_install.stdout or 'Created symlink' in lima_k3s_server_install.stdout"
+  no_log: true
+
+- name: Wait for k3s API from agents
+  ansible.builtin.shell: |
+    set -e
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+    export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$PATH"
+    export LIMA_HOME="{{ lima_k3s_home }}"
+    /opt/homebrew/bin/limactl shell "{{ lima_k3s_instance }}" -- sh -lc '
+      curl -ksS --max-time 5 -o /dev/null -w "%{http_code}" https://{{ murakumo_k3s_server_endpoint }}:6443/readyz | grep -Eq "^(200|401)$"
+    '
+  register: lima_k3s_api_ready
+  retries: 30
+  delay: 5
+  until: lima_k3s_api_ready.rc == 0
+  when: inventory_hostname != murakumo_k3s_server_host
+  changed_when: false
+
+- name: Install k3s agent on worker VMs
+  ansible.builtin.shell: |
+    set -e
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+    export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$PATH"
+    export LIMA_HOME="{{ lima_k3s_home }}"
+    /opt/homebrew/bin/limactl shell "{{ lima_k3s_instance }}" -- sudo sh -lc '
+      set -e
+      if ! systemctl is-active --quiet k3s-agent; then
+        curl -sfL https://get.k3s.io | \
+          K3S_TOKEN="{{ murakumo_k3s_token | default(lookup('ansible.builtin.env', 'MURAKUMO_K3S_TOKEN'), true) }}" \
+          K3S_URL="https://{{ murakumo_k3s_server_endpoint }}:6443" \
+          INSTALL_K3S_EXEC="agent \
+            --node-name {{ inventory_hostname }} \
+            --node-ip {{ murakumo_k3s_wg_ip }} \
+            --flannel-iface {{ murakumo_k3s_overlay_iface }}" \
+          sh -
+      fi
+      systemctl is-active k3s-agent
+    '
+  register: lima_k3s_agent_install
+  when: inventory_hostname != murakumo_k3s_server_host
+  changed_when: "'Installing' in lima_k3s_agent_install.stdout or 'Created symlink' in lima_k3s_agent_install.stdout"
+  no_log: true
+
+- name: Wait for all k3s nodes from control-plane VM
+  ansible.builtin.shell: |
+    set -e
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+    export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$PATH"
+    export LIMA_HOME="{{ lima_k3s_home }}"
+    /opt/homebrew/bin/limactl shell "{{ lima_k3s_instance }}" -- sudo kubectl get nodes -o wide
+  register: lima_k3s_nodes
+  retries: 30
+  delay: 10
+  until: lima_k3s_nodes.stdout is search('Ready')
+  when: inventory_hostname == murakumo_k3s_server_host
+  changed_when: false
+
+- name: Report Lima instance status
+  ansible.builtin.shell: |
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+    export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:$PATH"
+    export LIMA_HOME="{{ lima_k3s_home }}"
+    /opt/homebrew/bin/limactl list "{{ lima_k3s_instance }}"
+  register: lima_k3s_status
+  changed_when: false
+
+- name: Show bootstrap status
+  ansible.builtin.debug:
+    var: lima_k3s_status.stdout_lines

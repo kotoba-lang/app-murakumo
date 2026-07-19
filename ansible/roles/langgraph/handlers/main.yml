@@ -1,0 +1,9 @@
+---
+- name: restart langgraph
+  ansible.builtin.shell: |
+    pkill -f "{{ ansible_facts.env.HOME }}/langgraph-venv/bin/uvicorn src.app:app" 2>/dev/null || true
+    sleep 2
+    launchctl kickstart -k "gui/$(id -u)/com.etzhayyim.langgraph.{{ inventory_hostname }}" 2>/dev/null || true
+    launchctl kickstart -k "user/$(id -u)/com.etzhayyim.langgraph.{{ inventory_hostname }}" 2>/dev/null || true
+    launchctl load -w {{ ansible_facts.env.HOME }}/Library/LaunchAgents/com.etzhayyim.langgraph.{{ inventory_hostname }}.plist 2>/dev/null || true
+  changed_when: true

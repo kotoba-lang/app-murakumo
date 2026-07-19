@@ -1,0 +1,13 @@
+# Add this to the LiteLLM model_list when LiteLLM runs inside the same cluster
+# or can resolve the cluster DNS name.
+#
+# For host-side launchd LiteLLM, port-forward or expose the Service first, then
+# replace api_base with that reachable address.
+model_list:
+  - model_name: tier0-vulkan
+    litellm_params:
+      model: openai/smollm2-vulkan
+      api_base: http://llama-vulkan.murakumo-system.svc.cluster.local:8080/v1
+      api_key: none
+      timeout: 60
+      stream_timeout: 120

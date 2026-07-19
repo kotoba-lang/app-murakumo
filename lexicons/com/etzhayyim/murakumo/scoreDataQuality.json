@@ -1,0 +1,44 @@
+{
+  "lexicon": 1,
+  "id": "com.etzhayyim.murakumo.scoreDataQuality",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "Compute/update label quality_score in schema_registry for Murakumo label prioritization.",
+      "input": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "minRows": {
+              "type": "integer",
+              "default": 50
+            },
+            "sampleRows": {
+              "type": "integer",
+              "default": 64
+            },
+            "maxLabels": {
+              "type": "integer",
+              "default": 0
+            }
+          }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": [
+            "updatedLabels"
+          ],
+          "properties": {
+            "updatedLabels": {
+              "type": "integer"
+            }
+          }
+        }
+      }
+    }
+  }
+}

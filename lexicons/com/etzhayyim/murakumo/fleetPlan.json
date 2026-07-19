@@ -1,0 +1,57 @@
+{
+  "lexicon": 1,
+  "id": "com.etzhayyim.murakumo.fleetPlan",
+  "defs": {
+    "main": {
+      "type": "procedure",
+      "description": "Create Hayate V6 fleet expert-slot allocation plan from expert domains.",
+      "input": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": [
+            "dataDir",
+            "targetSlots"
+          ],
+          "properties": {
+            "dataDir": {
+              "type": "string"
+            },
+            "targetSlots": {
+              "type": "integer"
+            },
+            "dataSource": {
+              "type": "string",
+              "default": "lance"
+            },
+            "dim": {
+              "type": "integer",
+              "default": 512
+            }
+          }
+        }
+      },
+      "output": {
+        "encoding": "application/json",
+        "schema": {
+          "type": "object",
+          "required": [
+            "planPath",
+            "targetSlots"
+          ],
+          "properties": {
+            "planPath": {
+              "type": "string"
+            },
+            "targetSlots": {
+              "type": "integer"
+            },
+            "labels": {
+              "type": "integer"
+            }
+          }
+        }
+      }
+    }
+  }
+}

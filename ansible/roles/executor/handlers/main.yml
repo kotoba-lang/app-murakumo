@@ -1,0 +1,9 @@
+---
+- name: restart executor
+  ansible.builtin.shell: |
+    pkill -f "{{ ansible_facts.env.HOME }}/executor-venv/bin/python {{ ansible_facts.env.HOME }}/.etzhayyim/executor/app.py" 2>/dev/null || true
+    sleep 2
+    launchctl kickstart -k "gui/$(id -u)/com.etzhayyim.executor.{{ inventory_hostname }}" 2>/dev/null || true
+    launchctl kickstart -k "user/$(id -u)/com.etzhayyim.executor.{{ inventory_hostname }}" 2>/dev/null || true
+    launchctl load -w {{ ansible_facts.env.HOME }}/Library/LaunchAgents/com.etzhayyim.executor.{{ inventory_hostname }}.plist 2>/dev/null || true
+  changed_when: true

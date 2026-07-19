@@ -1,0 +1,23 @@
+---
+# litellm role defaults.
+
+litellm_version: "1.83.9"
+litellm_port: 4000
+# placeholder local development value; override from a secret manager.
+litellm_master_key: "sk-etzhayyim-litellm-local" # placeholder
+# placeholder local development DSN; override from a secret manager.
+litellm_database_url: "postgresql://etzhayyim_control:etzhayyim_control_local@127.0.0.1:5432/etzhayyim_control?schema=litellm" # placeholder
+
+# Models to expose; each entry fans out across all `fleet` hosts.
+# Override via host_vars on the gateway node or group_vars/litellm_gateway.yml.
+litellm_models:
+  - alias: gemma3-1b
+    ollama_model: gemma3:1b
+  - alias: gemma4-e4b
+    ollama_model: gemma4:e4b
+  - alias: qwen3.5-9b
+    ollama_model: qwen3.5:9b
+
+# External OpenAI-compatible backends to expose through the same LiteLLM router.
+# Keep secrets out of defaults; pass `api_key` via Ansible extra-vars or host_vars.
+litellm_external_models: []

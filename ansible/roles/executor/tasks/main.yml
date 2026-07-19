@@ -1,0 +1,108 @@
+---
+- name: Check Python 3.11 is available
+  ansible.builtin.stat:
+    path: /opt/homebrew/bin/python3.11
+  register: executor_python311
+
+- name: Fail fast when python@3.11 is absent
+  ansible.builtin.fail:
+    msg: "Install python@3.11 via brew: `brew install python@3.11`"
+  when: not executor_python311.stat.exists
+
+- name: Ensure executor app directory exists
+  ansible.builtin.file:
+    path: "{{ ansible_facts.env.HOME }}/.etzhayyim/executor"
+    state: directory
+    mode: "0755"
+
+- name: Ensure LaunchAgents directory exists for executor
+  ansible.builtin.file:
+    path: "{{ ansible_facts.env.HOME }}/Library/LaunchAgents"
+    state: directory
+    mode: "0755"
+
+- name: Ensure executor artifacts directory exists
+  ansible.builtin.file:
+    path: "{{ ansible_facts.env.HOME }}/.etzhayyim/executor-artifacts"
+    state: directory
+    mode: "0755"
+
+- name: Create executor venv
+  ansible.builtin.command:
+    cmd: /opt/homebrew/bin/python3.11 -m venv {{ ansible_facts.env.HOME }}/executor-venv
+    creates: "{{ ansible_facts.env.HOME }}/executor-venv/bin/pip"
+
+- name: Install executor dependencies
+  ansible.builtin.pip:
+    name:
+      - "boto3==1.39.14"
+      - "browser-use==0.1.48"
+      - "fastapi==0.116.1"
+      - "uvicorn==0.35.0"
+      - "httpx==0.28.1"
+      - "langchain-openai==0.3.11"
+      - "playwright==1.54.0"
+    virtualenv: "{{ ansible_facts.env.HOME }}/executor-venv"
+    virtualenv_command: /opt/homebrew/bin/python3.11 -m venv
+
+- name: Install Playwright Chromium browser
+  ansible.builtin.shell: |
+    PLAYWRIGHT_BROWSERS_PATH="{{ ansible_facts.env.HOME }}/.etzhayyim/playwright-browsers" \
+    "{{ ansible_facts.env.HOME }}/executor-venv/bin/python" -m playwright install chromium
+  args:
+    creates: "{{ ansible_facts.env.HOME }}/.etzhayyim/playwright-browsers"
+
+- name: Render executor app
+  ansible.builtin.template:
+    src: executor_app.py.j2
+    dest: "{{ ansible_facts.env.HOME }}/.etzhayyim/executor/app.py"
+    mode: "0644"
+  notify: restart executor
+
+- name: Render executor env
+  ansible.builtin.template:
+    src: executor.env.j2
+    dest: "{{ ansible_facts.env.HOME }}/.etzhayyim/executor.env"
+    mode: "0600"
+  notify: restart executor
+
+- name: Render executor start script
+  ansible.builtin.template:
+    src: executor-start.sh.j2
+    dest: "{{ ansible_facts.env.HOME }}/.etzhayyim/executor-start.sh"
+    mode: "0755"
+  notify: restart executor
+
+- name: Render executor launchd plist
+  ansible.builtin.template:
+    src: com.etzhayyim.executor.plist.j2
+    dest: "{{ ansible_facts.env.HOME }}/Library/LaunchAgents/com.etzhayyim.executor.{{ inventory_hostname }}.plist"
+    mode: "0644"
+  notify: restart executor
+
+- name: Remove legacy @reboot crontab entry for executor
+  ansible.builtin.cron:
+    name: "executor-worker"
+    state: absent
+
+- name: Load executor launchd service
+  ansible.builtin.command:
+    cmd: "launchctl load -w {{ ansible_facts.env.HOME }}/Library/LaunchAgents/com.etzhayyim.executor.{{ inventory_hostname }}.plist"
+  changed_when: false
+  failed_when: false
+
+- name: Flush executor handlers before health verification
+  ansible.builtin.meta: flush_handlers
+
+- name: Verify executor health
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ executor_port }}/health"
+    return_content: true
+  register: executor_health
+  until: "'\"ok\":true' in (executor_health.content | default(''))"
+  retries: 6
+  delay: 3
+
+- name: Report executor status
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: executor worker configured on :{{ executor_port }}"

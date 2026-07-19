@@ -1,0 +1,53 @@
+{
+  "_doc": "Murakumo Mac mini fleet model placement SSoT. Used by `etzhayyim murakumo models {list,declare,apply}`. Mini hostnames resolve via dnsmasq on jacob (.murakumo.lan). HF_TOKEN env var required for HF downloads on apply.",
+  "fleet": [
+    "zebulun", "issachar", "dan", "benjamin", "joseph",
+    "levi", "naphtali", "simeon", "asher"
+  ],
+  "models": {
+    "gemma4-e4b": {
+      "kind": "ollama",
+      "ollama_tag": "gemma4:e4b",
+      "size_gb": 6,
+      "purpose": "text inference (Ollama serving gemma4:e4b)",
+      "target_minis": ["zebulun", "issachar", "dan", "benjamin", "joseph", "levi", "naphtali", "simeon", "asher"]
+    },
+    "animagine-xl-4.0": {
+      "kind": "comfyui_checkpoint",
+      "filename": "animagine-xl-4.0.safetensors",
+      "path": "models/checkpoints",
+      "hf_repo": "cagliostrolab/animagine-xl-4.0",
+      "hf_file": "animagine-xl-4.0.safetensors",
+      "size_gb": 7,
+      "purpose": "SDXL anime image generation",
+      "target_minis": ["zebulun", "dan", "benjamin"]
+    },
+    "wai-real-mix-v11": {
+      "kind": "comfyui_diffusers",
+      "diffusers_repo": "John6666/wai-real-mix-v11-sdxl",
+      "size_gb": 10,
+      "purpose": "SDXL realistic image generation (diffusers format, use DiffusersLoader node)",
+      "target_minis": ["zebulun", "joseph", "asher", "simeon"]
+    },
+    "ltxv-2b-0.9.6-distilled": {
+      "kind": "comfyui_checkpoint",
+      "filename": "ltxv-2b-0.9.6-distilled-04-25.safetensors",
+      "path": "models/checkpoints",
+      "hf_repo": "Lightricks/LTX-Video",
+      "hf_file": "ltxv-2b-0.9.6-distilled-04-25.safetensors",
+      "size_gb": 5.9,
+      "purpose": "LTX-Video 0.9.6 distilled — 7-step T2V, 5s 768x512 clip in 175s on M4 16GB MPS (10x faster than Wan2.1-1.3B). Requires t5xxl-fp8-scaled co-resident.",
+      "target_minis": ["naphtali", "levi", "issachar"]
+    },
+    "t5xxl-fp8-scaled": {
+      "kind": "comfyui_checkpoint",
+      "filename": "t5xxl_fp8_e4m3fn_scaled.safetensors",
+      "path": "models/text_encoders",
+      "hf_repo": "comfyanonymous/flux_text_encoders",
+      "hf_file": "t5xxl_fp8_e4m3fn_scaled.safetensors",
+      "size_gb": 4.9,
+      "purpose": "T5-XXL FP8 text encoder for LTX-Video (also reusable for Flux). Co-resident with ltxv-2b-0.9.6-distilled.",
+      "target_minis": ["naphtali", "levi", "issachar"]
+    }
+  }
+}

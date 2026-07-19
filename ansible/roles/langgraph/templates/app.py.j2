@@ -1,0 +1,463 @@
+import os
+import socket
+import uuid
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
+from typing import Any, Optional
+
+import psycopg
+import httpx
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+
+from src.graph import graph
+
+
+POSTGRES_URI = os.environ["POSTGRES_URI"]
+LEASE_TTL_SEC = int(os.environ.get("LEASE_TTL_SEC", "60"))
+HOSTNAME = socket.gethostname()
+LITELLM_BASE_URL = os.environ.get("LITELLM_BASE_URL", "http://127.0.0.1:4000")
+LITELLM_API_KEY = os.environ.get("LITELLM_API_KEY", "")
+
+EXECUTOR_STEP_TYPES = ("executor_echo", "shell_task", "browser_task", "browser_use_task")
+
+app = FastAPI()
+
+
+@contextmanager
+def db_conn():
+    with psycopg.connect(POSTGRES_URI) as conn:
+        yield conn
+
+
+def now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+class CreateRunRequest(BaseModel):
+    workflowType: str = "executor_echo"
+    task: str = "idle"
+    payload: dict[str, Any] = {}
+
+
+class WorkerHeartbeatRequest(BaseModel):
+    workerId: str
+    role: str
+
+
+class PullLeaseRequest(BaseModel):
+    workerId: str
+    role: str = "executor"
+
+
+class AckLeaseRequest(BaseModel):
+    workerId: str
+    stepId: str
+
+
+class StepResultRequest(BaseModel):
+    workerId: str
+    result: Optional[dict[str, Any]] = None
+    error: Optional[dict[str, Any]] = None
+    status: str = "completed"
+
+
+def normalize_step_type(workflow_type: str) -> str:
+    if workflow_type in EXECUTOR_STEP_TYPES:
+        return workflow_type
+    if workflow_type == "litellm_chat":
+        return "litellm_chat"
+    return "executor_echo"
+
+
+def try_requeue_expired(conn: psycopg.Connection[Any]) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE job_step
+            SET status = 'pending',
+                worker_id = NULL,
+                lease_until = NULL,
+                attempt = attempt + 1,
+                updated_at = now()
+            WHERE status = 'leased'
+              AND lease_until IS NOT NULL
+              AND lease_until < now()
+              AND attempt < max_attempts
+            """
+        )
+        cur.execute(
+            """
+            UPDATE job_step
+            SET status = 'failed',
+                error_json = jsonb_build_object('reason', 'lease_expired_max_attempts'),
+                updated_at = now()
+            WHERE status = 'leased'
+              AND lease_until IS NOT NULL
+              AND lease_until < now()
+              AND attempt >= max_attempts
+            """
+        )
+
+
+def run_litellm(task: str, payload: dict[str, Any]) -> dict[str, Any]:
+    model = payload.get("model", "gemma3-1b")
+    max_tokens = int(payload.get("maxTokens", 64))
+    body = {
+        "model": model,
+        "messages": [{"role": "user", "content": task}],
+        "max_tokens": max_tokens,
+    }
+    headers = {"Content-Type": "application/json"}
+    if LITELLM_API_KEY:
+        headers["Authorization"] = f"Bearer {LITELLM_API_KEY}"
+    with httpx.Client(timeout=60) as client:
+        response = client.post(f"{LITELLM_BASE_URL}/v1/chat/completions", headers=headers, json=body)
+        response.raise_for_status()
+        data = response.json()
+    message = ""
+    choices = data.get("choices", [])
+    if choices:
+        message = choices[0].get("message", {}).get("content", "")
+    return {"model": model, "message": message, "raw": data}
+
+
+def probe_litellm_health() -> dict[str, Any]:
+    try:
+        with httpx.Client(timeout=5) as client:
+            response = client.get(f"{LITELLM_BASE_URL}/health/liveliness")
+            response.raise_for_status()
+            return {"ok": True, "status": response.text.strip() or "alive"}
+    except Exception as exc:
+        return {"ok": False, "status": "down", "error": str(exc)}
+
+
+@app.get("/healthz")
+def healthz():
+    return {"ok": True, "hostname": HOSTNAME}
+
+
+@app.get("/status")
+def status():
+    litellm = probe_litellm_health()
+    with db_conn() as conn:
+      try_requeue_expired(conn)
+      with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+        cur.execute(
+            """
+            SELECT
+              count(*) FILTER (WHERE role = 'executor') AS executor_count,
+              count(*) FILTER (WHERE status = 'alive') AS alive_count,
+              count(*) FILTER (WHERE last_seen_at < now() - interval '2 minutes') AS stale_count
+            FROM worker_node
+            """
+        )
+        workers = cur.fetchone() or {}
+        cur.execute(
+            """
+            SELECT
+              count(*) FILTER (WHERE status = 'queued') AS queued_runs,
+              count(*) FILTER (WHERE status = 'completed') AS completed_runs,
+              count(*) FILTER (WHERE status = 'failed') AS failed_runs
+            FROM job_run
+            WHERE created_at > now() - interval '24 hours'
+            """
+        )
+        run_counts = cur.fetchone() or {}
+        cur.execute(
+            """
+            SELECT
+              count(*) FILTER (WHERE status = 'pending') AS pending_steps,
+              count(*) FILTER (WHERE status = 'leased') AS leased_steps,
+              count(*) FILTER (WHERE status = 'failed') AS failed_steps
+            FROM job_step
+            """
+        )
+        step_counts = cur.fetchone() or {}
+        cur.execute(
+            """
+            SELECT job_id, workflow_type, status, updated_at
+            FROM job_run
+            ORDER BY updated_at DESC
+            LIMIT 10
+            """
+        )
+        recent_runs = cur.fetchall()
+        cur.execute(
+            """
+            SELECT event_id, job_id, step_id, kind, payload_json, created_at
+            FROM job_event
+            ORDER BY created_at DESC
+            LIMIT 20
+            """
+        )
+        recent_events = cur.fetchall()
+        cur.execute(
+            """
+            SELECT worker_id, role, status, last_seen_at, load_score
+            FROM worker_node
+            ORDER BY last_seen_at DESC
+            LIMIT 20
+            """
+        )
+        worker_rows = cur.fetchall()
+
+    return {
+        "ok": True,
+        "generatedAt": now_utc().isoformat(),
+        "controlPlane": {
+            "hostname": HOSTNAME,
+            "leaseTtlSec": LEASE_TTL_SEC,
+        },
+        "litellm": litellm,
+        "fleet": {
+            "workersTotal": workers.get("executor_count", 0),
+            "workersAlive": workers.get("alive_count", 0),
+            "workersStale": workers.get("stale_count", 0),
+            "workers": worker_rows,
+        },
+        "runs24h": {
+            "queued": run_counts.get("queued_runs", 0),
+            "completed": run_counts.get("completed_runs", 0),
+            "failed": run_counts.get("failed_runs", 0),
+        },
+        "steps": {
+            "pending": step_counts.get("pending_steps", 0),
+            "leased": step_counts.get("leased_steps", 0),
+            "failed": step_counts.get("failed_steps", 0),
+        },
+        "liveRuns": recent_runs,
+        "processMining": {
+            "recentEvents": recent_events,
+        },
+        "inferenceJobs": {
+            "note": "LiteLLM-backed synchronous inference currently reports through runs and events",
+        },
+    }
+
+
+@app.post("/runs")
+def create_run(req: CreateRunRequest):
+    job_id = str(uuid.uuid4())
+    step_id = str(uuid.uuid4())
+    graph_state = graph.invoke({"task": req.task, "status": "new"})
+    step_type = normalize_step_type(req.workflowType)
+    payload = {
+        "task": req.task,
+        "requestedPayload": req.payload,
+        "graphState": graph_state,
+    }
+    with db_conn() as conn:
+      with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO job_run (job_id, workflow_type, status, input_json, context_json)
+            VALUES (%s, %s, 'queued', %s::jsonb, %s::jsonb)
+            """,
+            (job_id, req.workflowType, psycopg.types.json.Jsonb(req.payload), psycopg.types.json.Jsonb(graph_state)),
+        )
+        cur.execute(
+            """
+            INSERT INTO job_step (step_id, job_id, step_key, step_type, status, payload_json, dedupe_key)
+            VALUES (%s, %s, 'bootstrap', %s, 'pending', %s::jsonb, %s)
+            """,
+            (step_id, job_id, step_type, psycopg.types.json.Jsonb(payload), f"{req.workflowType}:{req.task}"),
+        )
+        cur.execute(
+            """
+            INSERT INTO job_event (job_id, step_id, kind, payload_json)
+            VALUES (%s, %s, 'run.created', %s::jsonb)
+            """,
+            (job_id, step_id, psycopg.types.json.Jsonb({"workflowType": req.workflowType, "task": req.task})),
+        )
+        if step_type == "litellm_chat":
+            result = run_litellm(req.task, req.payload)
+            cur.execute(
+                """
+                UPDATE job_step
+                SET status = 'completed',
+                    result_json = %s::jsonb,
+                    updated_at = now()
+                WHERE step_id = %s
+                """,
+                (psycopg.types.json.Jsonb(result), step_id),
+            )
+            cur.execute(
+                """
+                UPDATE job_run
+                SET status = 'completed',
+                    updated_at = now()
+                WHERE job_id = %s
+                """,
+                (job_id,),
+            )
+            cur.execute(
+                """
+                INSERT INTO job_event (job_id, step_id, kind, payload_json)
+                VALUES (%s, %s, 'litellm.completed', %s::jsonb)
+                """,
+                (job_id, step_id, psycopg.types.json.Jsonb({"model": result["model"]})),
+            )
+    return {"ok": True, "jobId": job_id, "stepId": step_id, "state": graph_state}
+
+
+@app.get("/runs/{job_id}")
+def get_run(job_id: str):
+    with db_conn() as conn:
+      with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+        cur.execute(
+            """
+            SELECT job_id, workflow_type, status, input_json, context_json, created_at, updated_at
+            FROM job_run
+            WHERE job_id = %s
+            """,
+            (job_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="run not found")
+        cur.execute(
+            """
+            SELECT step_id, step_key, step_type, status, payload_json, result_json, error_json, worker_id, lease_until
+            FROM job_step
+            WHERE job_id = %s
+            ORDER BY created_at ASC
+            """,
+            (job_id,),
+        )
+        steps = cur.fetchall()
+    return {"ok": True, "run": row, "steps": steps}
+
+
+@app.post("/workers/heartbeat")
+def worker_heartbeat(req: WorkerHeartbeatRequest):
+    with db_conn() as conn:
+      with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO worker_node (worker_id, role, host, status, last_seen_at)
+            VALUES (%s, %s, %s, 'alive', now())
+            ON CONFLICT (worker_id) DO UPDATE
+              SET role = EXCLUDED.role,
+                  host = EXCLUDED.host,
+                  status = 'alive',
+                  last_seen_at = now()
+            """,
+            (req.workerId, req.role, HOSTNAME),
+        )
+    return {"ok": True}
+
+
+@app.post("/leases/pull")
+def pull_lease(req: PullLeaseRequest):
+    lease_until = now_utc() + timedelta(seconds=LEASE_TTL_SEC)
+    with db_conn() as conn:
+      try_requeue_expired(conn)
+      with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+        cur.execute(
+            """
+            WITH candidate AS (
+              SELECT step_id
+              FROM job_step
+              WHERE status = 'pending'
+                AND step_type = ANY(%s)
+              ORDER BY created_at ASC
+              LIMIT 1
+              FOR UPDATE SKIP LOCKED
+            )
+            UPDATE job_step js
+            SET status = 'leased',
+                worker_id = %s,
+                lease_until = %s,
+                updated_at = now()
+            FROM candidate
+            WHERE js.step_id = candidate.step_id
+            RETURNING js.step_id, js.job_id, js.step_type, js.payload_json
+            """,
+            (list(EXECUTOR_STEP_TYPES), req.workerId, lease_until),
+        )
+        row = cur.fetchone()
+        if not row:
+            return {"ok": True, "lease": None}
+        cur.execute(
+            """
+            INSERT INTO job_event (job_id, step_id, kind, payload_json)
+            VALUES (%s, %s, 'lease.assigned', %s::jsonb)
+            """,
+            (row["job_id"], row["step_id"], psycopg.types.json.Jsonb({"workerId": req.workerId})),
+        )
+        return {"ok": True, "lease": row}
+
+
+@app.post("/leases/ack")
+def ack_lease(req: AckLeaseRequest):
+    with db_conn() as conn:
+      with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE job_step
+            SET lease_until = %s,
+                updated_at = now()
+            WHERE step_id = %s
+              AND worker_id = %s
+            """,
+            (now_utc() + timedelta(seconds=LEASE_TTL_SEC), req.stepId, req.workerId),
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="lease not found")
+    return {"ok": True}
+
+
+@app.post("/steps/{step_id}/result")
+def record_result(step_id: str, req: StepResultRequest):
+    with db_conn() as conn:
+      with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+        cur.execute(
+            """
+            UPDATE job_step
+            SET status = %s,
+                result_json = %s::jsonb,
+                error_json = %s::jsonb,
+                lease_until = NULL,
+                updated_at = now()
+            WHERE step_id = %s
+              AND worker_id = %s
+            RETURNING job_id
+            """,
+            (
+                req.status,
+                psycopg.types.json.Jsonb(req.result or {}),
+                psycopg.types.json.Jsonb(req.error or {}),
+                step_id,
+                req.workerId,
+            ),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="step not found")
+        cur.execute(
+            """
+            UPDATE job_run
+            SET status = %s,
+                updated_at = now()
+            WHERE job_id = %s
+            """,
+            ("completed" if req.status == "completed" else "failed", row["job_id"]),
+        )
+        cur.execute(
+            """
+            INSERT INTO job_event (job_id, step_id, kind, payload_json)
+            VALUES (%s, %s, 'step.result', %s::jsonb)
+            """,
+            (row["job_id"], step_id, psycopg.types.json.Jsonb({"status": req.status, "workerId": req.workerId})),
+        )
+    return {"ok": True}
+
+
+@app.post("/infer")
+def infer(req: CreateRunRequest):
+    try:
+        result = run_litellm(req.task, req.payload)
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"ok": True, "result": result}

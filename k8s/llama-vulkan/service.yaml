@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: llama-vulkan
+  namespace: murakumo-system
+  labels:
+    app.kubernetes.io/name: llama-vulkan
+    app.kubernetes.io/part-of: murakumo
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: llama-vulkan
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

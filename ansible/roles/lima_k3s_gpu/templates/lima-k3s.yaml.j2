@@ -1,0 +1,36 @@
+minimumLimaVersion: 2.0.0
+
+vmType: {{ lima_k3s_vm_type }}
+cpus: {{ lima_k3s_cpus }}
+memory: {{ lima_k3s_memory }}
+disk: {{ lima_k3s_disk }}
+mounts: []
+
+images:
+  - location: "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Cloud/aarch64/images/Fedora-Cloud-Base-Generic-43-1.6.aarch64.qcow2"
+    arch: aarch64
+    digest: "sha256:66031aea9ec61e6d0d5bba12b9454e80ca94e8a79c913d37ded4c60311705b8b"
+
+containerd:
+  system: false
+  user: false
+
+ssh:
+  overVsock: false
+
+portForwards:
+  - guestPort: {{ murakumo_k3s_wireguard_port }}
+    guestIP: "0.0.0.0"
+    guestIPMustBeZero: false
+    hostIP: "0.0.0.0"
+    hostPort: {{ murakumo_k3s_wireguard_port }}
+    proto: udp
+
+provision:
+  - mode: system
+    script: |
+      #!/bin/sh
+      set -eu
+      if command -v dnf >/dev/null 2>&1; then
+        dnf install -y curl iproute iptables wireguard-tools
+      fi

@@ -1,0 +1,3 @@
+cloudflared_agent_hostname: "jacob-status.etzhayyim.com"
+cloudflared_llm_hostname: "llm.etzhayyim.com"
+cloudflared_metrics_domain: "murakumo-internal.etzhayyim.com"

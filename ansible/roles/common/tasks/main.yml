@@ -1,0 +1,77 @@
+---
+# common — Base setup for all fleet nodes
+#
+# Ensures directories, Nomad binary, SSH keys, and node.conf exist.
+
+- name: Ensure .etzhayyim directory
+  ansible.builtin.file:
+    path: "{{ etzhayyim_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Ensure .nomad directory
+  ansible.builtin.file:
+    path: "{{ nomad_config_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Ensure Nomad data directory
+  ansible.builtin.file:
+    path: "{{ nomad_data_dir }}"
+    state: directory
+    mode: "0755"
+  become: true
+
+- name: Ensure alloc_mounts directory
+  ansible.builtin.file:
+    path: /usr/local/share/alloc_mounts
+    state: directory
+    mode: "0755"
+  become: true
+
+- name: Check Nomad version
+  ansible.builtin.shell: "{{ nomad_bin }} version 2>/dev/null | grep -oE '[0-9]+\\.[0-9]+\\.[0-9]+' || echo 'none'"
+  register: current_nomad_version
+  changed_when: false
+
+- name: Download Nomad binary
+  ansible.builtin.get_url:
+    url: "https://releases.hashicorp.com/nomad/{{ nomad_version }}/nomad_{{ nomad_version }}_darwin_arm64.zip"
+    dest: /tmp/nomad.zip
+    mode: "0644"
+  when: current_nomad_version.stdout != nomad_version
+
+- name: Unzip Nomad binary
+  ansible.builtin.shell: cd /tmp && unzip -qo nomad.zip
+  when: current_nomad_version.stdout != nomad_version
+
+- name: Install Nomad binary
+  ansible.builtin.copy:
+    src: /tmp/nomad
+    dest: "{{ nomad_bin }}"
+    mode: "0755"
+    remote_src: true
+  become: true
+  when: current_nomad_version.stdout != nomad_version
+
+- name: Verify Nomad version
+  ansible.builtin.shell: "{{ nomad_bin }} version | head -1"
+  register: nomad_installed_version
+  changed_when: false
+
+- name: Ensure SSH key exists
+  ansible.builtin.shell: |
+    test -f ~/.ssh/id_ed25519 || ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519 -q
+  changed_when: false
+
+- name: Ensure node.conf exists
+  ansible.builtin.template:
+    src: node.conf.j2
+    dest: "{{ etzhayyim_dir }}/node.conf"
+    mode: "0644"
+
+- name: Deploy nomad-launchd-wrapper.sh
+  ansible.builtin.template:
+    src: nomad-launchd-wrapper.sh.j2
+    dest: "{{ etzhayyim_dir }}/nomad-launchd-wrapper.sh"
+    mode: "0755"

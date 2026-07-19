@@ -1,0 +1,25 @@
+from typing import NotRequired, TypedDict
+
+from langgraph.graph import END, START, StateGraph
+
+
+class ControlState(TypedDict):
+    task: str
+    status: str
+    result: NotRequired[str]
+
+
+def bootstrap(state: ControlState) -> ControlState:
+    task = state.get("task", "idle")
+    return {
+        "task": task,
+        "status": "queued" if task != "idle" else "idle",
+        "result": f"accepted:{task}",
+    }
+
+
+builder = StateGraph(ControlState)
+builder.add_node("bootstrap", bootstrap)
+builder.add_edge(START, "bootstrap")
+builder.add_edge("bootstrap", END)
+graph = builder.compile()

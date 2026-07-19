@@ -1,0 +1,87 @@
+---
+# litellm role — install LiteLLM proxy on the designated gateway host only.
+# Gateway host selection: inventory group `litellm_gateway` (expected single host).
+# Default: judah (same host as litellm_gateway).
+
+- name: Check Python 3.11 is available (required — LiteLLM + orjson don't build on 3.14)
+  ansible.builtin.stat:
+    path: /opt/homebrew/bin/python3.11
+  register: python311_stat
+
+- name: Fail fast when python@3.11 is absent
+  ansible.builtin.fail:
+    msg: "Install python@3.11 via brew: `brew install python@3.11`"
+  when: not python311_stat.stat.exists
+
+- name: Create LiteLLM venv
+  ansible.builtin.command:
+    cmd: /opt/homebrew/bin/python3.11 -m venv {{ ansible_facts.env.HOME }}/litellm-venv
+    creates: "{{ ansible_facts.env.HOME }}/litellm-venv/bin/pip"
+
+- name: Install LiteLLM in venv
+  ansible.builtin.pip:
+    name:
+      - "litellm[proxy]=={{ litellm_version | default('1.83.9') }}"
+      - "prisma"
+    virtualenv: "{{ ansible_facts.env.HOME }}/litellm-venv"
+    virtualenv_command: /opt/homebrew/bin/python3.11 -m venv
+
+- name: Ensure ~/.etzhayyim for litellm.log
+  ansible.builtin.file:
+    path: "{{ ansible_facts.env.HOME }}/.etzhayyim"
+    state: directory
+    mode: "0755"
+
+- name: Ensure LaunchAgents directory exists for LiteLLM
+  ansible.builtin.file:
+    path: "{{ ansible_facts.env.HOME }}/Library/LaunchAgents"
+    state: directory
+    mode: "0755"
+
+- name: Render litellm.yaml from fleet inventory
+  ansible.builtin.template:
+    src: litellm.yaml.j2
+    dest: "{{ ansible_facts.env.HOME }}/litellm.yaml"
+    mode: "0600"
+  notify: restart litellm
+
+- name: Render LiteLLM start script
+  ansible.builtin.template:
+    src: litellm-start.sh.j2
+    dest: "{{ ansible_facts.env.HOME }}/.etzhayyim/litellm-start.sh"
+    mode: "0755"
+  notify: restart litellm
+
+- name: Render LiteLLM launchd plist
+  ansible.builtin.template:
+    src: com.etzhayyim.litellm.plist.j2
+    dest: "{{ ansible_facts.env.HOME }}/Library/LaunchAgents/com.etzhayyim.litellm.{{ inventory_hostname }}.plist"
+    mode: "0644"
+  notify: restart litellm
+
+- name: Remove legacy @reboot crontab entry for LiteLLM
+  ansible.builtin.cron:
+    name: "litellm-proxy"
+    state: absent
+
+- name: Load LiteLLM launchd service
+  ansible.builtin.command:
+    cmd: "launchctl load -w {{ ansible_facts.env.HOME }}/Library/LaunchAgents/com.etzhayyim.litellm.{{ inventory_hostname }}.plist"
+  changed_when: false
+  failed_when: false
+
+- name: Flush LiteLLM handlers before health verification
+  ansible.builtin.meta: flush_handlers
+
+- name: Verify LiteLLM health
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ litellm_port | default(4000) }}/health/liveliness"
+    return_content: true
+  register: litellm_health
+  until: "'alive' in (litellm_health.content | default(''))"
+  retries: 6
+  delay: 5
+
+- name: LiteLLM status summary
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: LiteLLM alive on :{{ litellm_port | default(4000) }}, {{ (groups['fleet'] | default([])) | length }} backends in config"

@@ -1,0 +1,65 @@
+---
+# site.yml — Full fleet provisioning (idempotent)
+#
+# Usage:
+#   cd projects/etzhayyim-project-murakumo/ansible
+#   ansible-playbook site.yml                     # Full fleet
+#   ansible-playbook site.yml --tags=ollama       # Ollama fleet only
+#   ansible-playbook site.yml --tags=litellm      # LiteLLM router (jacob)
+#   ansible-playbook site.yml --tags=control      # LangGraph control plane (jacob)
+#   ansible-playbook site.yml --tags=cloudflared  # Cloudflare Tunnel only
+#
+# Retired 2026-04-18 pm: `venv` role (mlx_lm + starlette) — superseded by
+# Ollama which ships its own runtime. `serve_plain.py` no longer part of
+# the live path; see [[migrations]] serve-plain-py-retirement.
+# Retired 2026-04-20: `openclaw` role — purged from fleet.
+# Retired 2026-04-30: `goose` role — removed from fleet provisioning.
+
+- name: Common setup (all nodes)
+  hosts: fleet
+  gather_facts: true
+  roles:
+    - common
+  tags: [common]
+
+- name: Cloudflare Tunnel (control-plane host only)
+  hosts: control_plane
+  gather_facts: true
+  roles:
+    - cloudflared
+  tags: [cloudflared]
+
+- name: Ollama inference fleet (install + @reboot + model pull)
+  hosts: fleet
+  gather_facts: true
+  roles:
+    - ollama
+  tags: [ollama]
+
+- name: LiteLLM router (gateway host only)
+  hosts: litellm_gateway
+  gather_facts: true
+  roles:
+    - litellm
+  tags: [litellm]
+
+- name: Postgres control-plane DB (head node only)
+  hosts: control_plane
+  gather_facts: true
+  roles:
+    - postgres
+  tags: [postgres]
+
+- name: LangGraph control plane (head node only)
+  hosts: control_plane
+  gather_facts: true
+  roles:
+    - langgraph
+  tags: [control]
+
+- name: Executor workers (leased step runner)
+  hosts: executor_pool
+  gather_facts: true
+  roles:
+    - executor
+  tags: [executor]

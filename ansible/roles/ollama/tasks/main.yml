@@ -1,0 +1,186 @@
+---
+# ollama role — install Ollama + persist via launchd on each fleet node.
+#
+# Design notes:
+# - OLLAMA_HOST=0.0.0.0:11434 exposes the API to LAN so the central LiteLLM
+#   gateway on jacob can reach every node. Loopback-only would defeat the
+#   fan-out architecture.
+# - Model pulls are idempotent (`ollama pull` is a no-op when the manifest
+#   already matches).
+
+- name: Check if brew is available
+  ansible.builtin.stat:
+    path: /opt/homebrew/bin/brew
+  register: brew_stat
+
+- name: Fail fast when brew is absent
+  ansible.builtin.fail:
+    msg: "Homebrew not installed at /opt/homebrew/bin/brew — install brew first"
+  when: not brew_stat.stat.exists
+
+- name: Install Ollama via brew
+  ansible.builtin.shell: |
+    eval "$(/opt/homebrew/bin/brew shellenv)"
+    if ! command -v ollama >/dev/null 2>&1; then
+      brew install ollama >/dev/null 2>&1
+      echo "installed"
+    else
+      echo "present"
+    fi
+  register: ollama_install
+  changed_when: "'installed' in ollama_install.stdout"
+
+- name: Resolve Ollama binary path
+  ansible.builtin.command:
+    cmd: /opt/homebrew/bin/brew --prefix ollama
+  register: ollama_prefix
+  changed_when: false
+  check_mode: false
+
+- name: Set ollama_bin_path fact
+  ansible.builtin.set_fact:
+    ollama_bin_path: "{{ ollama_prefix.stdout }}/bin/ollama"
+
+- name: Ensure ~/.etzhayyim exists for Ollama logs
+  ansible.builtin.file:
+    path: "{{ ansible_facts.env.HOME }}/.etzhayyim"
+    state: directory
+    mode: "0755"
+
+- name: Ensure LaunchAgents directory exists for Ollama
+  ansible.builtin.file:
+    path: "{{ ansible_facts.env.HOME }}/Library/LaunchAgents"
+    state: directory
+    mode: "0755"
+
+- name: Render Ollama start script
+  ansible.builtin.template:
+    src: ollama-start.sh.j2
+    dest: "{{ ansible_facts.env.HOME }}/.etzhayyim/ollama-start.sh"
+    mode: "0755"
+  notify: restart ollama
+
+- name: Render Ollama launchd plist
+  ansible.builtin.template:
+    src: com.etzhayyim.ollama.plist.j2
+    dest: "{{ ansible_facts.env.HOME }}/Library/LaunchAgents/com.etzhayyim.ollama.{{ inventory_hostname }}.plist"
+    mode: "0644"
+  notify: restart ollama
+
+- name: Probe whether Ollama is already listening on :11434
+  ansible.builtin.shell: |
+    lsof -iTCP:11434 -sTCP:LISTEN 2>/dev/null | grep -q LISTEN
+  register: ollama_listening
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Probe running Ollama process env for OLLAMA_CONTEXT_LENGTH drift
+  ansible.builtin.shell: |
+    set -e
+    pid=$(pgrep -f 'ollama serve' | head -1)
+    [ -z "$pid" ] && { echo "no-ollama"; exit 0; }
+    current=$(ps -E -p "$pid" -o command= 2>/dev/null | tr ' ' '\n' | grep '^OLLAMA_CONTEXT_LENGTH=' | head -1 | cut -d= -f2)
+    if [ "$current" = "{{ ollama_context_length | default(16384) }}" ]; then
+      echo "ok"
+    else
+      echo "drift current=${current:-unset}"
+    fi
+  register: ollama_ctx_probe
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Stop running Ollama before restart (context length drift)
+  ansible.builtin.shell: |
+    pkill -f 'ollama serve' 2>/dev/null || true
+    sleep 2
+  when:
+    - ollama_listening.rc == 0
+    - "'drift' in (ollama_ctx_probe.stdout | default(''))"
+  changed_when: true
+  register: ollama_stopped
+
+- name: Re-check listening state after potential stop
+  ansible.builtin.shell: |
+    lsof -iTCP:11434 -sTCP:LISTEN 2>/dev/null | grep -q LISTEN
+  register: ollama_listening_post
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Remove legacy @reboot crontab entry for Ollama
+  ansible.builtin.cron:
+    name: "ollama-serve"
+    state: absent
+
+- name: Load Ollama launchd service
+  ansible.builtin.command:
+    cmd: "launchctl load -w {{ ansible_facts.env.HOME }}/Library/LaunchAgents/com.etzhayyim.ollama.{{ inventory_hostname }}.plist"
+  changed_when: false
+  failed_when: false
+
+- name: Flush Ollama handlers before health verification
+  ansible.builtin.meta: flush_handlers
+
+- name: Verify Ollama launchd path before model pull
+  block:
+    - name: Verify Ollama responds before model pull
+      ansible.builtin.uri:
+        url: http://127.0.0.1:11434/
+        return_content: true
+      register: ollama_pre_pull_health
+      until: "'Ollama is running' in (ollama_pre_pull_health.content | default(''))"
+      retries: 12
+      delay: 5
+  rescue:
+    - name: Start Ollama fallback with nohup on headless node
+      ansible.builtin.shell: |
+        nohup "{{ ansible_facts.env.HOME }}/.etzhayyim/ollama-start.sh" \
+          </dev/null >{{ ansible_facts.env.HOME }}/.etzhayyim/ollama.log 2>{{ ansible_facts.env.HOME }}/.etzhayyim/ollama.err & disown
+        sleep 5
+      changed_when: true
+
+    - name: Restore @reboot fallback for headless node
+      ansible.builtin.cron:
+        name: "ollama-serve"
+        special_time: reboot
+        job: "{{ ansible_facts.env.HOME }}/.etzhayyim/ollama-start.sh >{{ ansible_facts.env.HOME }}/.etzhayyim/ollama.log 2>{{ ansible_facts.env.HOME }}/.etzhayyim/ollama.err &"
+        state: present
+
+    - name: Verify fallback Ollama responds before model pull
+      ansible.builtin.uri:
+        url: http://127.0.0.1:11434/
+        return_content: true
+      register: ollama_fallback_health
+      until: "'Ollama is running' in (ollama_fallback_health.content | default(''))"
+      retries: 12
+      delay: 5
+
+- name: Pull models
+  ansible.builtin.command:
+    cmd: "{{ ollama_bin_path }} pull {{ item }}"
+  loop: "{{ ollama_models | default(['gemma3:1b']) }}"
+  register: ollama_pull
+  changed_when: "'success' in ollama_pull.stdout"
+
+- name: Verify Ollama responds
+  ansible.builtin.uri:
+    url: http://127.0.0.1:11434/
+    return_content: true
+  register: ollama_health
+  until: "'Ollama is running' in (ollama_health.content | default(''))"
+  retries: 6
+  delay: 5
+
+- name: Report per-node model registry
+  ansible.builtin.uri:
+    url: http://127.0.0.1:11434/api/tags
+  register: ollama_tags
+  changed_when: false
+
+- name: Ollama status summary
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: Ollama {{ ollama_install.stdout }}
+      models={{ (ollama_tags.json.models | default([])) | map(attribute='name') | list }}

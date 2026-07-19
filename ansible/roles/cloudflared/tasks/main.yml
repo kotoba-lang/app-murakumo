@@ -1,0 +1,61 @@
+---
+# cloudflared role — Install and configure Cloudflare Tunnel.
+#
+# Replaces SSH tunnels for Nomad RPC and Ray cluster connectivity.
+# cloudflared uses outbound HTTPS, bypassing macOS Local Network Privacy.
+
+- name: Check cloudflared binary
+  ansible.builtin.stat:
+    path: /usr/local/bin/cloudflared
+  register: cloudflared_bin
+
+- name: Install cloudflared via brew
+  community.general.homebrew:
+    name: cloudflared
+    state: present
+  when: not cloudflared_bin.stat.exists
+
+- name: Create cloudflared config directory
+  ansible.builtin.file:
+    path: "{{ ansible_facts.env.HOME }}/.cloudflared"
+    state: directory
+    mode: "0700"
+
+- name: Deploy cloudflared credentials
+  ansible.builtin.copy:
+    content: "{{ cloudflared_tunnel_credentials }}"
+    dest: "{{ ansible_facts.env.HOME }}/.cloudflared/{{ cloudflared_tunnel_id }}.json"
+    mode: "0600"
+  when: cloudflared_tunnel_credentials is defined
+  notify: restart cloudflared
+
+- name: Deploy cloudflared config
+  ansible.builtin.template:
+    src: config.yml.j2
+    dest: "{{ ansible_facts.env.HOME }}/.cloudflared/config.yml"
+    mode: "0644"
+  notify: restart cloudflared
+
+- name: Deploy cloudflared launchd plist
+  ansible.builtin.template:
+    src: com.etzhayyim.cloudflared.plist.j2
+    dest: "{{ ansible_facts.env.HOME }}/Library/LaunchAgents/com.etzhayyim.cloudflared.plist"
+    mode: "0644"
+  notify: restart cloudflared
+
+- name: Load cloudflared launchd service
+  ansible.builtin.command:
+    cmd: launchctl load -w {{ ansible_facts.env.HOME }}/Library/LaunchAgents/com.etzhayyim.cloudflared.plist
+  changed_when: false
+  failed_when: false
+
+- name: Verify cloudflared is running
+  ansible.builtin.command:
+    cmd: pgrep -f "cloudflared tunnel"
+  register: cloudflared_proc
+  changed_when: false
+  failed_when: false
+
+- name: Report cloudflared status
+  ansible.builtin.debug:
+    msg: "cloudflared {{ 'UP' if cloudflared_proc.rc == 0 else 'DOWN' }}"

@@ -1,0 +1,121 @@
+---
+# health-check.yml — fleet health check (non-destructive)
+#
+# Checks Ollama :11434 on each node + LiteLLM :4000 on the gateway,
+# then validates an end-to-end inference call through LiteLLM.
+#
+# Usage:
+#   ansible-playbook health-check.yml
+#   ansible-playbook health-check.yml --limit dan
+
+- name: Fleet node health (per-node via SSH)
+  hosts: fleet
+  gather_facts: true
+  tasks:
+    - name: Check SSH connectivity
+      ansible.builtin.ping:
+
+    - name: Check Ollama process
+      ansible.builtin.shell: pgrep -f "ollama serve" | head -1 || true
+      register: ollama_proc
+      changed_when: false
+
+    - name: Check Ollama /api/tags
+      ansible.builtin.uri:
+        url: http://127.0.0.1:11434/api/tags
+        status_code: [200]
+        timeout: 5
+      register: ollama_tags
+      failed_when: false
+
+    - name: Check Ollama launchd service
+      ansible.builtin.shell: launchctl print "gui/$(id -u)/com.etzhayyim.ollama.{{ inventory_hostname }}" >/dev/null 2>&1 && echo yes || echo no
+      register: ollama_launchd
+      changed_when: false
+
+    - name: Check disk usage (/)
+      ansible.builtin.shell: df -h / | tail -1 | awk '{print $5}'
+      register: disk_usage
+      changed_when: false
+
+    - name: Check memory pressure
+      ansible.builtin.shell: |
+        vm_stat | awk '/Pages free/ {free=$3} /Pages active/ {active=$3} END {
+          gsub(/\./,"",free); gsub(/\./,"",active);
+          total=free+active; pct=int(active*100/total);
+          printf "%d%% used\n", pct
+        }'
+      register: mem_usage
+      changed_when: false
+
+    - name: Node summary
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} |
+          ollama={{ 'UP' if ollama_proc.stdout else 'DOWN' }} (pid={{ ollama_proc.stdout or 'n/a' }}) |
+          tags_http={{ ollama_tags.status | default('err') }} |
+          models={{ (ollama_tags.json.models | default([]) if ollama_tags.json is defined else []) | map(attribute='name') | list }} |
+          launchd={{ ollama_launchd.stdout }} |
+          disk={{ disk_usage.stdout }} |
+          mem={{ mem_usage.stdout }}
+
+- name: LiteLLM gateway health (on judah)
+  hosts: litellm_gateway
+  gather_facts: false
+  tasks:
+    - name: Check LiteLLM process
+      ansible.builtin.shell: pgrep -f "litellm --config" | head -1 || true
+      register: litellm_proc
+      changed_when: false
+
+    - name: Probe /health/liveliness
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ litellm_port | default(4000) }}/health/liveliness"
+        return_content: true
+        timeout: 5
+      register: litellm_live
+      failed_when: false
+
+    - name: Check LiteLLM launchd service
+      ansible.builtin.shell: launchctl print "gui/$(id -u)/com.etzhayyim.litellm.{{ inventory_hostname }}" >/dev/null 2>&1 && echo yes || echo no
+      register: litellm_launchd
+      changed_when: false
+
+    - name: LiteLLM summary
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} |
+          litellm={{ 'UP' if litellm_proc.stdout else 'DOWN' }} (pid={{ litellm_proc.stdout or 'n/a' }}) |
+          live={{ litellm_live.content | default('err') }} |
+          launchd={{ litellm_launchd.stdout }}
+
+- name: End-to-end inference through LiteLLM
+  hosts: litellm_gateway
+  gather_facts: false
+  tasks:
+    - name: Fire 8 parallel inference requests, count unique backends
+      ansible.builtin.shell: |
+        rm -f /tmp/lb-e2e-*.out 2>/dev/null
+        for i in $(seq 1 8); do
+          curl -sS -m 30 -X POST "http://127.0.0.1:{{ litellm_port | default(4000) }}/v1/chat/completions" \
+            -H "Authorization: Bearer {{ litellm_master_key | default('sk-etzhayyim-litellm-local') }}" \
+            -H "Content-Type: application/json" \
+            -d '{"model":"gemma3-1b","messages":[{"role":"user","content":"hi"}],"max_tokens":3}' \
+            > /tmp/lb-e2e-$i.out 2>&1 &
+        done
+        wait
+        python3 -c "
+        import json, glob
+        ok=fail=0
+        for f in sorted(glob.glob('/tmp/lb-e2e-*.out')):
+            with open(f) as fh: body=fh.read().strip()
+            try: json.loads(body); ok+=1
+            except: fail+=1
+        print(f'ok={ok}/8 fail={fail}')
+        "
+      register: e2e
+      changed_when: false
+
+    - name: E2E summary
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: {{ e2e.stdout }}"
