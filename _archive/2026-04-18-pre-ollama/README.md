@@ -1,6 +1,6 @@
 # Pre-Ollama fleet artefacts (archived 2026-04-18)
 
-Superseded by the Ollama + LiteLLM topology. See root CLAUDE.md §Architecture
+Superseded by the Ollama + LiteLLM topology. See root AGENTS.md §Architecture
 shift — Ollama fleet + LiteLLM (2026-04-18 pm).
 
 | Path | Was | Replaced by |

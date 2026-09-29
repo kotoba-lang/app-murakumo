@@ -161,7 +161,7 @@ ssh naphtali@naphtalinomac-mini.local \
 ### asher — IP confirmation (already resolved)
 
 `192.168.1.21` reachable (ping 0.858ms). `fleet.toml` value is correct. The
-Murakumo CLAUDE.md `.54` IP was old WiFi-side inventory; ADR-2605231630 +
+Murakumo AGENTS.md `.54` IP was old WiFi-side inventory; ADR-2605231630 +
 the 2026-05-23 fleet.toml update set the SoT to `.21`.
 
 ## Cell deployment state
